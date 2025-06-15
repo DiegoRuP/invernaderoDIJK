@@ -1,0 +1,111 @@
+# =======================
+# CONFIGURACIÓN GLOBAL
+# =======================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.log
+*.tmp
+*~
+
+# =======================
+# CONFIGURACIÓN FIREBASE
+# =======================
+/firebase-database-config/*.json
+/firebase-database-config/serviceAccountKey.json
+/firebase-database-config/.env
+/firebase-database-config/config.js
+/firebase-database-config/firebase-config.json
+
+# =======================
+# ESP32 / ARDUINO
+# =======================
+/esp32-code/build/
+/esp32-code/.pio/
+/esp32-code/.vscode/
+/esp32-code/platformio.ini.backup
+/esp32-code/src/config.h
+/esp32-code/src/secrets.h
+/esp32-code/lib/
+/esp32-code/.pioenvs/
+/esp32-code/.piolibdeps/
+
+# =======================
+# APP MÓVIL (Flutter/React Native)
+# =======================
+/invernadero_app/build/
+/invernadero_app/.dart_tool/
+/invernadero_app/.flutter-plugins
+/invernadero_app/.flutter-plugins-dependencies
+/invernadero_app/.packages
+/invernadero_app/.pub-cache/
+/invernadero_app/.pub/
+/invernadero_app/ios/Runner/GoogleService-Info.plist
+/invernadero_app/android/app/google-services.json
+/invernadero_app/android/key.properties
+/invernadero_app/android/app/upload-keystore.jks
+/invernadero_app/ios/Pods/
+/invernadero_app/ios/.symlinks/
+/invernadero_app/ios/Flutter/flutter_assets/
+/invernadero_app/ios/Flutter/flutter_export_environment.sh
+
+# React Native (si usas React Native en lugar de Flutter)
+/invernadero_app/node_modules/
+/invernadero_app/npm-debug.log*
+/invernadero_app/yarn-debug.log*
+/invernadero_app/yarn-error.log*
+/invernadero_app/android/app/build/
+/invernadero_app/ios/build/
+
+# =======================
+# WEB DASHBOARD (Angular)
+# =======================
+/web-dashboard/node_modules/
+/web-dashboard/dist/
+/web-dashboard/tmp/
+/web-dashboard/out-tsc/
+/web-dashboard/bazel-out/
+/web-dashboard/.angular/
+/web-dashboard/e2e/reports/
+/web-dashboard/coverage/
+/web-dashboard/libpeerconnection.log
+/web-dashboard/npm-debug.log*
+/web-dashboard/yarn-debug.log*
+/web-dashboard/yarn-error.log*
+/web-dashboard/src/environments/environment.prod.ts
+/web-dashboard/src/environments/environment.ts
+/web-dashboard/src/app/config/firebase-config.ts
+
+# =======================
+# ARCHIVOS DE CONFIGURACIÓN SENSIBLE
+# =======================
+**/.env
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
+**/config.json
+**/secrets.*
+**/apiKeys.*
+**/credentials.*
+
+# =======================
+# IDEs Y EDITORES
+# =======================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# =======================
+# ARCHIVOS TEMPORALES
+# =======================
+*.tmp
+*.temp
+*.backup
+*.bak
