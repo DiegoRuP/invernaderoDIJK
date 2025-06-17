@@ -3,15 +3,6 @@ import 'package:invernadero_app/models/sensor_data.dart';
 
 class FirebaseService {
   final DatabaseReference _database = FirebaseDatabase.instance.ref();
-
-  // Escucha los cambios en los datos del último registro
-  // Asumimos que quieres la última entrada dentro de /UsersData/{uid}/readings/
-  // Para obtener el "último" necesitamos escuchar el nodo padre y ordenar/limitar.
-  // Esto puede ser complejo si la estructura es solo timestamp como clave.
-  // Si tu ESP32 sube datos a una ruta fija como /invernadero/latest_data, sería más fácil.
-
-  // Dado que usas un timestamp como clave, necesitaremos escuchar todo el nodo 'readings'
-  // y luego obtener la entrada más reciente.
   Stream<SensorData?> getLatestSensorData(String uid) {
     return _database.child('UsersData/$uid/readings').orderByKey().limitToLast(1).onValue.map((event) {
       if (event.snapshot.value != null) {
@@ -25,17 +16,8 @@ class FirebaseService {
       return null;
     });
   }
-
-  // Si decides tener un nodo 'current' o 'latest' en Firebase, sería más eficiente:
-  // _database.child('UsersData/$uid/current_data').onValue.map(...)
-
-  // Función para activar/desactivar la bomba manualmente
+  // Función para enviar el estado de la bomba de agua
   Future<void> setPumpStatus(String uid, bool status) async {
-    // Asumiendo que tienes un nodo 'control' para actuadores o similar
-    // Si tu ESP32 espera un 'riego_manual' en una ruta específica
-    // Database.setBool("invernadero/actuadores/riego_manual", true);
-    // Necesitas replicar esa ruta aquí.
-    // Por ejemplo, si tu ESP32 escucha en /invernadero/actuadores/riego_manual
     await _database.child('invernadero/actuadores/riego_manual').set(status);
     print('Bomba de agua: ${status ? 'ON' : 'OFF'} enviado a Firebase');
   }

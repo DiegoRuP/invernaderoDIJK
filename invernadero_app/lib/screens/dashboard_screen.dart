@@ -20,29 +20,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     _getUid();
   }
-
-  // Función para obtener el UID. En un futuro, si usas autenticación,
-  // el UID vendrá de FirebaseAuth. Por ahora, lo pondremos hardcodeado
-  // o lo derivaremos de tu usuario de prueba.
-  // Tu ESP32 usa "diegoruan109@gmail.com" y "prueba123".
-  // Puedes obtener el UID de tu usuario en la consola de Firebase -> Authentication.
-  // Si no quieres hardcodearlo, necesitarías Firebase Auth para el login.
   void _getUid() {
-    // Por ahora, como no tienes autenticación en la app, y tu ESP32 usa un UID específico
-    // que se genera al autenticarse, necesitarías obtener ese UID.
-    // La forma más fácil de comenzar es obtener el UID de tu usuario de prueba
-    // desde la consola de Firebase -> Authentication (es una cadena larga).
-    // O podrías hacer que el ESP32 suba los datos directamente a una ruta fija
-    // sin el UID dinámico, por ejemplo, /invernadero/readings/...
-    // Para fines de esta práctica inicial, puedes usar un UID de prueba o una ruta fija.
-    // Por ejemplo, si el UID del usuario "diegoruan109@gmail.com" es "tu_uid_largo_aqui", úsalo.
-    // Voy a usar un placeholder para el UID que deberías reemplazar.
     setState(() {
-      _currentUserUid = "YM7mg66eafgxz7i4vBJID8xy3Sq2"; // Reemplaza esto con tu UID real
-      // Si no usas UID, y tu ESP32 sube a una ruta fija como 'invernadero/readings',
-      // entonces el stream no necesitaría el uid: _database.child('invernadero/readings')...
-      // Pero dado tu código de ESP32, el UID es parte de la ruta.
-      // Así que obtén tu UID de la sección de Autenticación de Firebase.
+      _currentUserUid = "YM7mg66eafgxz7i4vBJID8xy3Sq2"; 
     });
   }
 
@@ -97,9 +77,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 16),
                 GridView.count(
                   shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(), // Deshabilita el scroll del GridView
-                  crossAxisCount: 2, // 2 columnas
-                  childAspectRatio: 1, // Relación de aspecto para las tarjetas
+                  physics: const NeverScrollableScrollPhysics(), 
+                  crossAxisCount: 2, 
+                  childAspectRatio: 1, 
                   children: [
                     SensorCard(
                       title: 'Temperatura',
