@@ -20,13 +20,7 @@ DHT dht(DHT_PIN, DHT_TYPE);
 void asyncCB(AsyncResult &aResult);
 void processData(AsyncResult &aResult);
 
-// Network and Firebase credentials
-#define WIFI_SSID "Red-Ruan"
-#define WIFI_PASSWORD "Pulgoso510"
-#define Web_API_KEY "AIzaSyAeX00Myg65WK8uQpNneEDwfd32udYVv8Y"
-#define DATABASE_URL "https://invernadero-multi-default-rtdb.firebaseio.com/"
-#define USER_EMAIL "diegoruan109@gmail.com"
-#define USER_PASS "prueba123"
+// WiFi credentials
 
 // Authentication
 UserAuth user_auth(Web_API_KEY, USER_EMAIL, USER_PASS);
