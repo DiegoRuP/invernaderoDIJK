@@ -117,11 +117,11 @@ void readSensors() {
   
   // Control automático de la bomba (activar si humedad del suelo < 30%)
   if (soilMoisture < 30 && !pumpStatus) {
-    digitalWrite(RELAY_PIN, HIGH);
+    digitalWrite(RELAY_PIN, LOW);
     pumpStatus = true;
     Serial.println("💧 Bomba activada - Suelo seco");
   } else if (soilMoisture > 70 && pumpStatus) {
-    digitalWrite(RELAY_PIN, LOW);
+    digitalWrite(RELAY_PIN, HIGH);
     pumpStatus = false;
     Serial.println("💧 Bomba desactivada - Suelo húmedo");
   }
