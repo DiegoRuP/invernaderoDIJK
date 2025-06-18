@@ -17,10 +17,29 @@ class FirebaseService {
     });
   }
   // Función para enviar el estado de la bomba de agua
-  Future<void> setPumpStatus(String uid, bool status) async {
-    await _database.child('invernadero/actuadores/riego_manual').set(status);
-    print('Bomba de agua: ${status ? 'ON' : 'OFF'} enviado a Firebase');
+  Future<void> setPumpMode(String uid, String mode) async {
+    await _database.child('invernadero/actuadores/riego_manual').set(mode);
+    print('Modo bomba: $mode enviado a Firebase');
   }
 
-  // Puedes añadir más funciones para otros actuadores o para enviar comandos
+  Stream<String> getPumpModeStream() {
+    return _database
+        .child('invernadero/actuadores/riego_manual')
+        .onValue
+        .map((event) {
+          if (event.snapshot.value != null) {
+            return event.snapshot.value.toString();
+          }
+          return "auto"; // Valor por defecto
+        });
+  }
+
+  Future<String> getCurrentPumpMode() async {
+    final snapshot = await _database.child('invernadero/actuadores/riego_manual').get();
+    if (snapshot.exists) {
+      return snapshot.value.toString();
+    }
+    return "auto"; // Valor por defecto
+  }
+
 }

@@ -23,7 +23,7 @@ void processData(AsyncResult &aResult);
 // WiFi credentials
 
 // Authentication
-UserAuth user_auth(Web_API_KEY, USER_EMAIL, USER_PASS);
+UserAuth user_auth("AIzaSyAeX00Myg65WK8uQpNneEDwfd32udYVv8Y", "diegoruan109@gmail.com", "prueba123");
 
 // Firebase components
 FirebaseApp app;
@@ -57,8 +57,10 @@ bool pumpStatus = false;
 // Timing variables
 unsigned long lastSensorRead = 0;
 unsigned long lastDataSend = 0;
+unsigned long lastManualCheck = 0;
 const unsigned long SENSOR_INTERVAL = 2000;  // Leer sensores cada 2 segundos
 const unsigned long SEND_INTERVAL = 10000;   // Enviar datos cada 10 segundos
+const unsigned long MANUAL_CHECK_INTERVAL = 3000; // Revisar estado manual cada 3 segundos
 
 bool firebaseReady = false;
 
@@ -69,6 +71,8 @@ int timestamp;
 // Create JSON objects for storing data
 object_t jsonData, obj1, obj2, obj3, obj4, obj5, obj6;
 JsonWriter writer;
+
+String pumpMode = "auto"; // Estados: "auto", "on", "off"
 
 // Initialize WiFi
 void initWiFi() {
@@ -115,17 +119,6 @@ void readSensors() {
   int soilRaw = analogRead(SOIL_PIN);
   soilMoisture = map(soilRaw, 0, 4095, 100, 0); // Más humedad = mayor valor
   
-  // Control automático de la bomba (activar si humedad del suelo < 30%)
-  if (soilMoisture < 30 && !pumpStatus) {
-    digitalWrite(RELAY_PIN, LOW);
-    pumpStatus = true;
-    Serial.println("💧 Bomba activada - Suelo seco");
-  } else if (soilMoisture > 70 && pumpStatus) {
-    digitalWrite(RELAY_PIN, HIGH);
-    pumpStatus = false;
-    Serial.println("💧 Bomba desactivada - Suelo húmedo");
-  }
-  
   // Mostrar valores en Serial
   Serial.println("=== LECTURA DE SENSORES ===");
   Serial.printf("Temperatura: %.1f°C\n", temperature);
@@ -164,7 +157,42 @@ void sendToFirebase() {
   // Send to Firebase using the parent path
   Database.set<object_t>(aClient, parentPath, jsonData, processData, "RTDB_Send_Data");
   
-  Serial.println("📡 Datos enviados a Firebase");
+  Serial.println("Datos enviados a Firebase");
+}
+
+// Función para verificar el modo de la bomba desde Firebase
+void checkManualPumpStatus() {
+  if (!firebaseReady) return;
+  
+  Database.get(aClient, "/invernadero/actuadores/riego_manual", processManualPump, "Manual_Pump_Check");
+}
+
+// Callback para procesar el modo de la bomba
+void processManualPump(AsyncResult &aResult) {
+  if (aResult.available()) {
+    String result = aResult.c_str();
+    // Remover comillas si las tiene
+    result.replace("\"", "");
+    
+    Serial.printf("Modo bomba recibido: '%s'\n", result.c_str());
+    
+    if (result == "auto") {
+      pumpMode = "auto";
+      Serial.println("MODO AUTOMÁTICO activado desde Firebase");
+    } else if (result == "on") {
+      pumpMode = "on";
+      Serial.println("BOMBA FORZADA ENCENDIDA desde Firebase");
+    } else if (result == "off") {
+      pumpMode = "off";
+      Serial.println("BOMBA FORZADA APAGADA desde Firebase");
+    } else {
+      Serial.printf("Valor desconocido recibido: '%s'. Manteniendo modo actual: %s\n", result.c_str(), pumpMode.c_str());
+    }
+  }
+  
+  if (aResult.isError()) {
+    Serial.printf("Error al leer modo bomba: %s\n", aResult.error().message().c_str());
+  }
 }
 
 void setup(){
@@ -174,7 +202,7 @@ void setup(){
   
   // Inicializar pines
   pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW); // Bomba apagada inicialmente
+  digitalWrite(RELAY_PIN, HIGH); // Bomba apagada inicialmente (asumiendo relé activo-bajo)
   
   // Inicializar DHT
   dht.begin();
@@ -208,10 +236,11 @@ void loop(){
     uid = app.getUid().c_str();
     firebaseReady = true;
     
-    Serial.println("✅ FIREBASE CONNECTION SUCCESSFUL!");
+    Serial.println("FIREBASE CONNECTION SUCCESSFUL!");
     Serial.println("Authentication: READY");
     Serial.print("User UID: ");
     Serial.println(uid);
+
     Serial.println("Sistema de sensores iniciado...");
     Serial.println("================================");
   }
@@ -224,6 +253,50 @@ void loop(){
     if (currentTime - lastSensorRead >= SENSOR_INTERVAL) {
       readSensors();
       lastSensorRead = currentTime;
+    }
+    
+    // Verificar estado manual desde Firebase
+    if (currentTime - lastManualCheck >= MANUAL_CHECK_INTERVAL) {
+      checkManualPumpStatus();
+      lastManualCheck = currentTime;
+    }
+    
+    // Control de la bomba con 3 estados
+    if (pumpMode == "on") {
+      // Estado 1: Forzar bomba ENCENDIDA
+      digitalWrite(RELAY_PIN, LOW); // Activar bomba
+      pumpStatus = true;
+      Serial.println("BOMBA ACTIVADA - Modo Manual ON");
+    } 
+    else if (pumpMode == "off") {
+      // Estado 2: Forzar bomba APAGADA  
+      digitalWrite(RELAY_PIN, HIGH); // Desactivar bomba
+      pumpStatus = false;
+      Serial.println("BOMBA DESACTIVADA - Modo Manual OFF");
+    }
+    else if (pumpMode == "auto") {
+      // Estado 3: Control AUTOMÁTICO basado en humedad
+      if (soilMoisture < 30) {
+        digitalWrite(RELAY_PIN, LOW); // Activar bomba
+        pumpStatus = true;
+        Serial.println("BOMBA ACTIVADA - Modo Automático (suelo seco)");
+      } else if (soilMoisture > 70) {
+        digitalWrite(RELAY_PIN, HIGH); // Desactivar bomba
+        pumpStatus = false;
+        Serial.println("BOMBA DESACTIVADA - Modo Automático (suelo húmedo)");
+      }
+      // Si está entre 30-70%, mantener el estado actual
+    }
+    
+    // Mostrar el estado actual de la bomba
+    static bool lastDisplayedPumpStatus = !pumpStatus;
+    static String lastDisplayedPumpMode = "";
+    if (pumpStatus != lastDisplayedPumpStatus || pumpMode != lastDisplayedPumpMode) {
+        Serial.printf("Estado de la Bomba: %s (Modo: %s)\n", 
+                     pumpStatus ? "ON" : "OFF", 
+                     pumpMode.c_str());
+        lastDisplayedPumpStatus = pumpStatus;
+        lastDisplayedPumpMode = pumpMode;
     }
     
     // Enviar datos a Firebase
@@ -246,13 +319,13 @@ void asyncCB(AsyncResult &aResult) {
     Firebase.printf("📅 Event: %s\n", aResult.uid().c_str());
   }
   if (aResult.isError()) {
-    Firebase.printf("❌ Error: %s, msg: %s, code: %d\n", 
+    Firebase.printf("Error: %s, msg: %s, code: %d\n", 
                    aResult.uid().c_str(), 
                    aResult.error().message().c_str(), 
                    aResult.error().code());
   }
   if (aResult.available()) {
-    Firebase.printf("✅ Data sent successfully: %s\n", aResult.uid().c_str());
+    Firebase.printf("Data sent successfully: %s\n", aResult.uid().c_str());
   }
 }
 

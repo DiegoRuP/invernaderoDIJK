@@ -18,6 +18,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    void _listenToPumpMode() {
+      _firebaseService.getPumpModeStream().listen((mode) {
+        if (mounted) {
+          setState(() {
+            _pumpMode = mode;
+          });
+        }
+      });
+    }
     _getUid();
   }
   void _getUid() {
@@ -27,7 +36,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // Variable para controlar el estado del botón de riego
-  bool _isPumpManualActive = false;
+  String _pumpMode = "auto";
 
   @override
   Widget build(BuildContext context) {
@@ -58,11 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           }
 
           final SensorData data = snapshot.data!;
-          // Actualizar el estado del botón de riego basado en el dato de la bomba (si es el mismo flag)
-          // Si el ESP32 escribe pumpStatus true/false directamente basado en riego_manual
-          // o si tienes un flag separado 'riego_manual_app' en Firebase
-          // Por ahora, usaremos el `pumpStatus` que ya tienes.
-          _isPumpManualActive = data.pumpStatus;
+          _pumpMode = data.pumpStatus.toString();
 
 
           return SingleChildScrollView(
@@ -116,51 +121,114 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         const Text(
                           'Control Manual:',
                           style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 16),
-                        ElevatedButton.icon(
-                          onPressed: () async {
-                            // Cambia el estado en Firebase
-                            final newStatus = !_isPumpManualActive; // Invertir el estado
-                            setState(() {
-                              _isPumpManualActive = newStatus; // Actualiza el UI inmediatamente
-                            });
-                            await _firebaseService.setPumpStatus(_currentUserUid!, newStatus);
-                            // Puedes añadir un SnackBar para confirmar el envío
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Riego ${newStatus ? 'activado' : 'desactivado'} manualmente.'),
+
+                        // NUEVOS BOTONES: Auto, ON, OFF
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            // Botón Automático
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                                child: ElevatedButton.icon(
+                                  onPressed: () async {
+                                    setState(() {
+                                      _pumpMode = "auto";
+                                    });
+                                    await _firebaseService.setPumpMode(_currentUserUid!, "auto");
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Modo automático activado')),
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(Icons.auto_mode, size: 20),
+                                  label: const Text('Auto'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _pumpMode == "auto" ? Colors.blue[600] : Colors.grey[400],
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
                                 ),
-                              );
-                            }
-                          },
-                          icon: Icon(
-                            _isPumpManualActive ? Icons.water_drop : Icons.water_drop_outlined,
-                            size: 30,
-                          ),
-                          label: Text(
-                            _isPumpManualActive ? 'Desactivar Riego Manual' : 'Activar Riego Manual',
-                            style: const TextStyle(fontSize: 18),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _isPumpManualActive ? Colors.red[400] : Colors.green[600],
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 15),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
-                          ),
+
+                            // Botón Encender (ON)
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                                child: ElevatedButton.icon(
+                                  onPressed: () async {
+                                    setState(() {
+                                      _pumpMode = "on";
+                                    });
+                                    await _firebaseService.setPumpMode(_currentUserUid!, "on");
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Bomba encendida manualmente')),
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(Icons.water_drop, size: 20),
+                                  label: const Text('ON'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _pumpMode == "on" ? Colors.green[600] : Colors.grey[400],
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                            // Botón Apagar (OFF)
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                                child: ElevatedButton.icon(
+                                  onPressed: () async {
+                                    setState(() {
+                                      _pumpMode = "off";
+                                    });
+                                    await _firebaseService.setPumpMode(_currentUserUid!, "off");
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Bomba apagada manualmente')),
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(Icons.water_drop_outlined, size: 20),
+                                  label: const Text('OFF'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _pumpMode == "off" ? Colors.red[600] : Colors.grey[400],
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 24),
                 Text(
                   'Última actualización: ${DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.fromMillisecondsSinceEpoch(data.timestamp * 1000))}',
