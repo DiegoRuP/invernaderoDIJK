@@ -4,7 +4,6 @@ class SensorData {
   final bool pumpStatus;
   final int soilMoisture;
   final double temperature;
-  final int timestamp; // En segundos
 
   SensorData({
     required this.humidity,
@@ -12,7 +11,6 @@ class SensorData {
     required this.pumpStatus,
     required this.soilMoisture,
     required this.temperature,
-    required this.timestamp,
   });
 
   // Constructor de fábrica para crear una instancia desde un mapa (Firebase)
@@ -23,7 +21,6 @@ class SensorData {
       pumpStatus: map['pumpStatus'] as bool,
       soilMoisture: (map['soilMoisture'] as num).toInt(),
       temperature: (map['temperature'] as num).toDouble(),
-      timestamp: (map['timestamp'] as num).toInt(),
     );
   }
 }
