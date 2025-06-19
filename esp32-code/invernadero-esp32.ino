@@ -1,17 +1,20 @@
+// SISTEMA DE RIEGO HÍBRIDO - ESP32 FIRMWARE v5.1
+// Implementación corregida según especificación técnica
+
 #define ENABLE_USER_AUTH
 #define ENABLE_DATABASE
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <FirebaseClient.h>
 #include <DHT.h>
-#include "time.h"
+#include <time.h>
 
 // Definición de pines
 #define DHT_PIN 4
 #define DHT_TYPE DHT11
-#define LDR_PIN 34        // Pin analógico para LDR
-#define SOIL_PIN 35       // Pin analógico para sensor de humedad del suelo
-#define RELAY_PIN 2       // Pin digital para el relé de la bomba
+#define LDR_PIN 34
+#define SOIL_PIN 35
+#define RELAY_PIN 2
 
 // Inicialización del sensor DHT
 DHT dht(DHT_PIN, DHT_TYPE);
@@ -19,8 +22,20 @@ DHT dht(DHT_PIN, DHT_TYPE);
 // User functions
 void asyncCB(AsyncResult &aResult);
 void processData(AsyncResult &aResult);
+void processCommand(AsyncResult &aResult);
 
-// WiFi credentials
+// --- Credenciales ---
+#define WIFI_SSID "Red-Ruan"
+#define WIFI_PASSWORD "Pulgoso510"
+#define Web_API_KEY "AIzaSyAeX00Myg65WK8uQpNneEDwfd32udYVv8Y"
+#define DATABASE_URL "https://invernadero-multi-default-rtdb.firebaseio.com/"
+#define USER_EMAIL "diegoruan109@gmail.com"
+#define USER_PASS "prueba123"
+
+// NTP Server para timestamp real
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = -21600; // GMT-6 para México
+const int daylightOffset_sec = 0;
 
 // Authentication
 UserAuth user_auth("AIzaSyAeX00Myg65WK8uQpNneEDwfd32udYVv8Y", "diegoruan109@gmail.com", "prueba123");
@@ -35,44 +50,53 @@ RealtimeDatabase Database;
 // Variable to save USER UID
 String uid;
 
-// Database paths
-String databasePath;
-String tempPath = "/temperature";
-String humPath = "/humidity";
-String lightPath = "/lightLevel";
-String soilPath = "/soilMoisture";
-String pumpPath = "/pumpStatus";
-String timePath = "/timestamp";
+// ENDPOINTS según especificación
+String commandEndpoint = "/invernadero/control";        // SOLO LECTURA para ESP32
+String statusEndpoint;                                  // SOLO ESCRITURA para ESP32 (/UsersData/{uid}/current)
 
-// Parent Node (to be updated in every loop)
-String parentPath;
-
-// Variables para los sensores
+// Variables del sistema (estado interno del ESP32)
 float temperature = 0;
 float humidity = 0;
 int lightLevel = 0;
 int soilMoisture = 0;
-bool pumpStatus = false;
+bool pumpStatus = false;        // Estado FÍSICO actual del relé
+String pumpMode = "auto";       // Modo de operación ("manual" o "auto")
+
+// Control de riego por duración
+bool isWatering = false;                    // Indica si está regando actualmente
+unsigned long wateringStartTime = 0;       // Tiempo de inicio del riego
+const unsigned long WATERING_DURATION = 3000; // 3 segundos de riego
+unsigned long lastAutoWatering = 0;        // Timestamp del último riego automático
+const unsigned long AUTO_WATERING_COOLDOWN = 60000; // 1 minuto entre riegos automáticos
+
+// Control de timestamps para evitar comandos repetidos
+unsigned long lastProcessedTimestamp = 0;
 
 // Timing variables
 unsigned long lastSensorRead = 0;
-unsigned long lastDataSend = 0;
-unsigned long lastManualCheck = 0;
-const unsigned long SENSOR_INTERVAL = 2000;  // Leer sensores cada 2 segundos
-const unsigned long SEND_INTERVAL = 10000;   // Enviar datos cada 10 segundos
-const unsigned long MANUAL_CHECK_INTERVAL = 3000; // Revisar estado manual cada 3 segundos
+unsigned long lastStatusSend = 0;
+unsigned long lastCommandCheck = 0;
+const unsigned long SENSOR_INTERVAL = 2000;     // Leer sensores cada 2s
+const unsigned long STATUS_INTERVAL = 5000;     // Enviar estado cada 5s
+const unsigned long COMMAND_INTERVAL = 3000;    // Revisar comandos cada 3s
 
 bool firebaseReady = false;
+bool firebaseIsBusy = false;
+bool ntpSynced = false;
 
-// NTP Server
-const char* ntpServer = "pool.ntp.org";
-int timestamp;
-
-// Create JSON objects for storing data
-object_t jsonData, obj1, obj2, obj3, obj4, obj5, obj6;
+// Create JSON objects
+object_t jsonData, obj1, obj2, obj3, obj4, obj5, obj6, obj7;
 JsonWriter writer;
 
-String pumpMode = "auto"; // Estados: "auto", "on", "off"
+// Función para obtener timestamp Unix real
+unsigned long getUnixTimestamp() {
+  if (!ntpSynced) {
+    return millis() / 1000; // Fallback con tiempo relativo
+  }
+  time_t now;
+  time(&now);
+  return now;
+}
 
 // Initialize WiFi
 void initWiFi() {
@@ -85,259 +109,360 @@ void initWiFi() {
   Serial.println();
   Serial.print("Connected with IP: ");
   Serial.println(WiFi.localIP());
-}
-
-// Function that gets current epoch time
-unsigned long getTime() {
-  time_t now;
+  
+  // Configurar NTP para timestamp real
+  Serial.println("⏰ Sincronizando tiempo con NTP...");
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  
+  // Esperar a que se sincronice el tiempo
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    return(0);
+  int attempts = 0;
+  while (!getLocalTime(&timeinfo) && attempts < 10) {
+    delay(1000);
+    attempts++;
+    Serial.print(".");
   }
-  time(&now);
-  return now;
+  
+  if (attempts < 10) {
+    ntpSynced = true;
+    Serial.println();
+    Serial.println("✅ Tiempo sincronizado con NTP");
+    Serial.println(&timeinfo, "Fecha y hora actual: %A, %B %d %Y %H:%M:%S");
+  } else {
+    Serial.println();
+    Serial.println("⚠️ Usando tiempo relativo (NTP no disponible)");
+  }
 }
 
 // Función para leer sensores
 void readSensors() {
-  // Leer DHT11
-  temperature = dht.readTemperature();
-  humidity = dht.readHumidity();
+  // Leer DHT
+  float temp = dht.readTemperature();
+  float hum = dht.readHumidity();
   
-  // Verificar si las lecturas son válidas
-  if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("Error reading DHT sensor!");
-    temperature = 0;
-    humidity = 0;
+  if (!isnan(temp) && !isnan(hum) && temp > 0 && hum > 0) {
+    temperature = temp;
+    humidity = hum;
   }
   
-  // Leer LDR (convertir a porcentaje, 0-100%)
+  // Leer sensores analógicos
   int ldrRaw = analogRead(LDR_PIN);
   lightLevel = map(ldrRaw, 0, 4095, 0, 100);
-  
-  // Leer sensor de humedad del suelo (convertir a porcentaje, 0-100%)
   int soilRaw = analogRead(SOIL_PIN);
-  soilMoisture = map(soilRaw, 0, 4095, 100, 0); // Más humedad = mayor valor
-  
-  // Mostrar valores en Serial
-  Serial.println("=== LECTURA DE SENSORES ===");
-  Serial.printf("Temperatura: %.1f°C\n", temperature);
-  Serial.printf("Humedad: %.1f%%\n", humidity);
-  Serial.printf("Luz: %d%%\n", lightLevel);
-  Serial.printf("Humedad suelo: %d%%\n", soilMoisture);
-  Serial.printf("Bomba: %s\n", pumpStatus ? "ON" : "OFF");
-  Serial.println("==========================");
+  soilMoisture = map(soilRaw, 0, 4095, 100, 0);
 }
 
-// Función para enviar datos a Firebase
-void sendToFirebase() {
-  if (!firebaseReady) return;
-  
-  // Update database path
-  databasePath = "/UsersData/" + uid + "/readings";
-  
-  // Get current timestamp
-  timestamp = getTime();
-  Serial.print("time: ");
-  Serial.println(timestamp);
-  
-  parentPath = databasePath + "/" + String(timestamp);
-  
-  // Create JSON objects with sensor data (similar to the example)
-  writer.create(obj1, tempPath, temperature);
-  writer.create(obj2, humPath, humidity);
-  writer.create(obj3, lightPath, lightLevel);
-  writer.create(obj4, soilPath, soilMoisture);
-  writer.create(obj5, pumpPath, pumpStatus);
-  writer.create(obj6, timePath, timestamp);
-  
-  // Join all objects into one JSON
-  writer.join(jsonData, 6, obj1, obj2, obj3, obj4, obj5, obj6);
-  
-  // Send to Firebase using the parent path
-  Database.set<object_t>(aClient, parentPath, jsonData, processData, "RTDB_Send_Data");
-  
-  Serial.println("Datos enviados a Firebase");
-}
-
-// Función para verificar el modo de la bomba desde Firebase
-void checkManualPumpStatus() {
-  if (!firebaseReady) return;
-  
-  Database.get(aClient, "/invernadero/actuadores/riego_manual", processManualPump, "Manual_Pump_Check");
-}
-
-// Callback para procesar el modo de la bomba
-void processManualPump(AsyncResult &aResult) {
-  if (aResult.available()) {
-    String result = aResult.c_str();
-    // Remover comillas si las tiene
-    result.replace("\"", "");
-    
-    Serial.printf("Modo bomba recibido: '%s'\n", result.c_str());
-    
-    if (result == "auto") {
-      pumpMode = "auto";
-      Serial.println("MODO AUTOMÁTICO activado desde Firebase");
-    } else if (result == "on") {
-      pumpMode = "on";
-      Serial.println("BOMBA FORZADA ENCENDIDA desde Firebase");
-    } else if (result == "off") {
-      pumpMode = "off";
-      Serial.println("BOMBA FORZADA APAGADA desde Firebase");
-    } else {
-      Serial.printf("Valor desconocido recibido: '%s'. Manteniendo modo actual: %s\n", result.c_str(), pumpMode.c_str());
-    }
+// Función para iniciar riego por duración
+void startWatering(String reason) {
+  if (isWatering) {
+    Serial.println("⚠️ Ya se está regando, ignorando comando");
+    return;
   }
+  
+  isWatering = true;
+  pumpStatus = true;
+  wateringStartTime = millis();
+  digitalWrite(RELAY_PIN, LOW); // Activar bomba (relé activo bajo)
+  
+  Serial.printf("💧 INICIANDO RIEGO por %s - Duración: %lu ms\n", reason.c_str(), WATERING_DURATION);
+  
+  // ENVÍO INMEDIATO de estado cuando INICIA el riego
+  sendStatusToFirebase();
+}
+
+// Función para detener riego
+void stopWatering() {
+  if (!isWatering) return;
+  
+  isWatering = false;
+  pumpStatus = false;
+  digitalWrite(RELAY_PIN, HIGH); // Desactivar bomba
+  
+  // Volver al modo automático después de cualquier ciclo
+  pumpMode = "auto";
+  
+  Serial.println("🛑 RIEGO TERMINADO - Volviendo a modo automático");
+  
+  // ENVÍO INMEDIATO de estado cuando TERMINA el riego
+  sendStatusToFirebase();
+}
+
+// Función para enviar ESTADO a Firebase (/UsersData/{uid}/current)
+void sendStatusToFirebase() {
+  if (!firebaseReady || firebaseIsBusy) return;
+  
+  firebaseIsBusy = true;
+  Serial.println("📤 Enviando estado a Firebase...");
+  
+  // Obtener timestamp Unix real
+  unsigned long timestamp = getUnixTimestamp();
+  
+  // Construir JSON según especificación exacta
+  writer.create(obj1, "temperature", temperature);
+  writer.create(obj2, "humidity", humidity);
+  writer.create(obj3, "lightLevel", lightLevel);
+  writer.create(obj4, "soilMoisture", soilMoisture);
+  writer.create(obj5, "pumpStatus", pumpStatus);        // Estado FÍSICO actual del relé
+  writer.create(obj6, "pumpMode", pumpMode);            // Modo de operación actual
+  writer.create(obj7, "timestamp", timestamp);          // Timestamp Unix real
+  
+  // Unir todos los objetos
+  writer.join(jsonData, 7, obj1, obj2, obj3, obj4, obj5, obj6, obj7);
+  
+  Database.set<object_t>(aClient, statusEndpoint, jsonData, processData, "SEND_STATUS");
+}
+
+// Función para leer COMANDOS desde Firebase (/invernadero/control)
+void readCommandsFromFirebase() {
+  if (!firebaseReady || firebaseIsBusy) return;
+  
+  firebaseIsBusy = true;
+  Serial.println("📥 Revisando comandos...");
+  
+  Database.get(aClient, commandEndpoint, processCommand, "READ_COMMAND");
+}
+
+// Procesar comandos recibidos desde Firebase
+void processCommand(AsyncResult &aResult) {
+  firebaseIsBusy = false;
   
   if (aResult.isError()) {
-    Serial.printf("Error al leer modo bomba: %s\n", aResult.error().message().c_str());
+    Serial.printf("❌ Error leyendo comandos: %s\n", aResult.error().message().c_str());
+    return;
+  }
+  
+  if (aResult.available()) {
+    String payload = aResult.payload();
+    Serial.printf("📋 Payload RAW recibido: %s\n", payload.c_str());
+    
+    // El payload puede venir como "null" si no hay datos
+    if (payload == "null" || payload.length() < 10) {
+      Serial.println("ℹ️ No hay comandos disponibles (payload vacío)");
+      return;
+    }
+    
+    // Parsear el JSON para extraer command y timestamp
+    String command = "";
+    unsigned long timestamp = 0;
+    
+    // Extraer comando - buscar "water-now" directamente
+    if (payload.indexOf("water-now") != -1) {
+      command = "water-now";
+      Serial.println("🔍 Comando 'water-now' detectado en payload");
+    }
+    
+    // Extraer timestamp con parsing más robusto
+    int tsIndex = payload.indexOf("timestamp");
+    if (tsIndex != -1) {
+      // Buscar el valor después de "timestamp":
+      int colonIndex = payload.indexOf(":", tsIndex);
+      if (colonIndex != -1) {
+        // Encontrar el final del número (hasta coma, corchete o fin)
+        int start = colonIndex + 1;
+        int end = payload.length();
+        
+        // Buscar delimitadores
+        int commaPos = payload.indexOf(",", start);
+        int bracePos = payload.indexOf("}", start);
+        
+        if (commaPos != -1 && commaPos < end) end = commaPos;
+        if (bracePos != -1 && bracePos < end) end = bracePos;
+        
+        String tsStr = payload.substring(start, end);
+        tsStr.trim();
+        tsStr.replace(" ", ""); // Eliminar espacios
+        
+        // Convertir a número
+        timestamp = tsStr.toInt();
+        if (timestamp == 0) {
+          // Intentar conversión con long long por si es muy grande
+          timestamp = (unsigned long)tsStr.toDouble();
+        }
+      }
+    }
+    
+    Serial.printf("🔍 PARSEADO - Comando: '%s', Timestamp: %lu (Último procesado: %lu)\n", 
+                  command.c_str(), timestamp, lastProcessedTimestamp);
+    
+    // Verificar si es un comando válido y nuevo
+    if (command.length() > 0 && command == "water-now") {
+      if (timestamp > lastProcessedTimestamp) {
+        lastProcessedTimestamp = timestamp;
+        Serial.printf("✅ ¡EJECUTANDO COMANDO MANUAL! Timestamp: %lu\n", timestamp);
+        
+        // Ejecutar riego manual
+        pumpMode = "manual";
+        startWatering("MANUAL desde APP");
+        
+      } else {
+        Serial.printf("⚠️ Comando ya procesado - Timestamp: %lu <= %lu\n", timestamp, lastProcessedTimestamp);
+      }
+    } else if (command.length() == 0) {
+      Serial.println("❌ No se encontró comando válido en el payload");
+    } else {
+      Serial.printf("⚠️ Comando desconocido: '%s'\n", command.c_str());
+    }
+    
+  } else {
+    Serial.println("ℹ️ No hay datos disponibles en la respuesta");
   }
 }
 
-void setup(){
+// Función para controlar la bomba (lógica híbrida)
+void controlPump() {
+  unsigned long currentTime = millis();
+  
+  // 1. Verificar si el riego actual debe terminar (PRIORIDAD MÁXIMA)
+  if (isWatering && (currentTime - wateringStartTime >= WATERING_DURATION)) {
+    stopWatering();
+    return; // Salir para procesar el cambio de estado
+  }
+  
+  // 2. Riego automático solo si:
+  //    - NO está regando actualmente
+  //    - Está en modo automático
+  //    - La humedad del suelo es menor a 30%
+  //    - Ha pasado el tiempo de cooldown
+  if (!isWatering && pumpMode == "auto" && soilMoisture < 30) {
+    if (currentTime - lastAutoWatering >= AUTO_WATERING_COOLDOWN) {
+      lastAutoWatering = currentTime;
+      startWatering("AUTOMÁTICO");
+      Serial.printf("🤖 Riego automático activado (humedad: %d%% < 30%%)\n", soilMoisture);
+    } else {
+      // Debug del cooldown cada 10 segundos
+      static unsigned long lastCooldownMsg = 0;
+      if (currentTime - lastCooldownMsg >= 10000) {
+        lastCooldownMsg = currentTime;
+        unsigned long remaining = AUTO_WATERING_COOLDOWN - (currentTime - lastAutoWatering);
+        Serial.printf("⏳ Riego automático en cooldown (faltan %lu segundos)\n", remaining / 1000);
+      }
+    }
+  }
+}
+
+void setup() {
   Serial.begin(115200);
+  Serial.println("\n========================================");
+  Serial.println("=== ESP32 IRRIGATION SYSTEM v5.1 ===");
+  Serial.println("=== SISTEMA DE RIEGO HÍBRIDO      ===");
+  Serial.println("========================================");
   
-  Serial.println("=== SISTEMA INVERNADERO ===");
-  
-  // Inicializar pines
+  // Configurar pin del relé
   pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, HIGH); // Bomba apagada inicialmente (asumiendo relé activo-bajo)
+  digitalWrite(RELAY_PIN, HIGH); // Bomba OFF inicialmente (relé activo bajo)
+  pumpStatus = false;
   
-  // Inicializar DHT
+  // Inicializar sensor DHT
   dht.begin();
   
+  // Conectar WiFi y sincronizar tiempo
   initWiFi();
   
-  // Configure time
-  configTime(0, 0, ntpServer);
-  
-  // Configure SSL client
+  // Configurar cliente SSL
   ssl_client.setInsecure();
   ssl_client.setConnectionTimeout(1000);
   ssl_client.setHandshakeTimeout(5);
   
-  Serial.println("Initializing Firebase...");
-  
-  // Initialize Firebase
-  initializeApp(aClient, app, getAuth(user_auth), processData, "🔐 authTask");
+  // Inicializar Firebase
+  Serial.println("🔥 Inicializando Firebase...");
+  initializeApp(aClient, app, getAuth(user_auth), processData, "AUTH_TASK");
   app.getApp<RealtimeDatabase>(Database);
   Database.url(DATABASE_URL);
   
-  Serial.println("Setup complete. Waiting for authentication...");
+  Serial.println("⏳ Esperando autenticación de Firebase...");
 }
 
-void loop(){
-  // Maintain authentication and async tasks
+void loop() {
   app.loop();
   
-  // Check if authentication is ready
-  if (app.ready() && !firebaseReady){
+  // Configurar endpoints cuando Firebase esté listo
+  if (app.ready() && !firebaseReady) {
     uid = app.getUid().c_str();
     firebaseReady = true;
     
-    Serial.println("FIREBASE CONNECTION SUCCESSFUL!");
-    Serial.println("Authentication: READY");
-    Serial.print("User UID: ");
-    Serial.println(uid);
-
-    Serial.println("Sistema de sensores iniciado...");
-    Serial.println("================================");
+    // Configurar endpoint de estado según especificación
+    statusEndpoint = "/UsersData/" + uid + "/current";
+    
+    Serial.println("========================================");
+    Serial.println("🔥 FIREBASE CONECTADO EXITOSAMENTE!");
+    Serial.printf("📍 Command Endpoint (READ):  %s\n", commandEndpoint.c_str());
+    Serial.printf("📍 Status Endpoint (WRITE):  %s\n", statusEndpoint.c_str());
+    Serial.printf("👤 User UID: %s\n", uid.c_str());
+    Serial.println("🚀 Sistema listo para operar");
+    Serial.println("========================================");
   }
   
-  // Si Firebase está listo, ejecutar tareas de sensores
   if (firebaseReady) {
     unsigned long currentTime = millis();
     
-    // Leer sensores
+    // 1. Leer sensores (operación local - siempre)
     if (currentTime - lastSensorRead >= SENSOR_INTERVAL) {
       readSensors();
       lastSensorRead = currentTime;
     }
     
-    // Verificar estado manual desde Firebase
-    if (currentTime - lastManualCheck >= MANUAL_CHECK_INTERVAL) {
-      checkManualPumpStatus();
-      lastManualCheck = currentTime;
-    }
+    // 2. Controlar bomba físicamente (operación local - siempre)
+    controlPump();
     
-    // Control de la bomba con 3 estados
-    if (pumpMode == "on") {
-      // Estado 1: Forzar bomba ENCENDIDA
-      digitalWrite(RELAY_PIN, LOW); // Activar bomba
-      pumpStatus = true;
-      Serial.println("BOMBA ACTIVADA - Modo Manual ON");
-    } 
-    else if (pumpMode == "off") {
-      // Estado 2: Forzar bomba APAGADA  
-      digitalWrite(RELAY_PIN, HIGH); // Desactivar bomba
-      pumpStatus = false;
-      Serial.println("BOMBA DESACTIVADA - Modo Manual OFF");
-    }
-    else if (pumpMode == "auto") {
-      // Estado 3: Control AUTOMÁTICO basado en humedad
-      if (soilMoisture < 30) {
-        digitalWrite(RELAY_PIN, LOW); // Activar bomba
-        pumpStatus = true;
-        Serial.println("BOMBA ACTIVADA - Modo Automático (suelo seco)");
-      } else if (soilMoisture > 70) {
-        digitalWrite(RELAY_PIN, HIGH); // Desactivar bomba
-        pumpStatus = false;
-        Serial.println("BOMBA DESACTIVADA - Modo Automático (suelo húmedo)");
+    // 3. Comunicación con Firebase (solo si no está ocupado)
+    if (!firebaseIsBusy) {
+      // Prioridad 1: Leer comandos del endpoint de control
+      if (currentTime - lastCommandCheck >= COMMAND_INTERVAL) {
+        lastCommandCheck = currentTime;
+        readCommandsFromFirebase();
       }
-      // Si está entre 30-70%, mantener el estado actual
+      // Prioridad 2: Enviar estado al endpoint de estado
+      else if (currentTime - lastStatusSend >= STATUS_INTERVAL) {
+        lastStatusSend = currentTime;
+        sendStatusToFirebase();
+      }
     }
     
-    // Mostrar el estado actual de la bomba
-    static bool lastDisplayedPumpStatus = !pumpStatus;
-    static String lastDisplayedPumpMode = "";
-    if (pumpStatus != lastDisplayedPumpStatus || pumpMode != lastDisplayedPumpMode) {
-        Serial.printf("Estado de la Bomba: %s (Modo: %s)\n", 
-                     pumpStatus ? "ON" : "OFF", 
-                     pumpMode.c_str());
-        lastDisplayedPumpStatus = pumpStatus;
-        lastDisplayedPumpMode = pumpMode;
-    }
-    
-    // Enviar datos a Firebase
-    if (currentTime - lastDataSend >= SEND_INTERVAL) {
-      sendToFirebase();
-      lastDataSend = currentTime;
+    // Debug del estado cada 10 segundos
+    static unsigned long lastDebug = 0;
+    if (currentTime - lastDebug >= 10000) {
+      lastDebug = currentTime;
+      Serial.println("==========================================");
+      Serial.printf("📊 ESTADO DEL SISTEMA:\n");
+      Serial.printf("   🌡️  Temperatura: %.1f°C\n", temperature);
+      Serial.printf("   💧 Humedad Aire: %.1f%%\n", humidity);
+      Serial.printf("   ☀️  Nivel Luz: %d%%\n", lightLevel);
+      Serial.printf("   🌱 Humedad Suelo: %d%%\n", soilMoisture);
+      Serial.printf("   ⚡ Estado Bomba: %s (%s)\n", pumpStatus ? "ACTIVA" : "INACTIVA", pumpMode.c_str());
+      Serial.printf("   🔄 Estado Riego: %s\n", isWatering ? "REGANDO" : "ESPERANDO");
+      Serial.println("==========================================");
     }
   }
-  else {
-    static unsigned long lastCheck = 0;
-    if (millis() - lastCheck > 2000) { // Check every 2 seconds
-      lastCheck = millis();
-      Serial.println("⏳ Waiting for Firebase authentication...");
+}
+
+// Callback para procesar respuestas de Firebase
+void processData(AsyncResult &aResult) {
+  if (aResult.uid() == "SEND_STATUS") {
+    firebaseIsBusy = false;
+  }
+  
+  if (aResult.isError()) {
+    Serial.printf("❌ Error en tarea '%s': %s\n", aResult.uid().c_str(), aResult.error().message().c_str());
+    firebaseIsBusy = false; // Liberar el flag en caso de error
+    return;
+  }
+  
+  if (aResult.available() && aResult.uid() == "SEND_STATUS") {
+    Serial.println("✅ Estado enviado a Firebase exitosamente");
+  }
+  
+  if (aResult.uid() == "AUTH_TASK") {
+    if (aResult.available()) {
+      Serial.println("🔐 Autenticación completada");
     }
   }
 }
 
 void asyncCB(AsyncResult &aResult) {
   if (aResult.isEvent()) {
-    Firebase.printf("📅 Event: %s\n", aResult.uid().c_str());
+    Serial.printf("📅 Event: %s\n", aResult.uid().c_str());
   }
   if (aResult.isError()) {
-    Firebase.printf("Error: %s, msg: %s, code: %d\n", 
-                   aResult.uid().c_str(), 
-                   aResult.error().message().c_str(), 
-                   aResult.error().code());
+    Serial.printf("❌ Async Error: %s, msg: %s\n", aResult.uid().c_str(), aResult.error().message().c_str());
   }
-  if (aResult.available()) {
-    Firebase.printf("Data sent successfully: %s\n", aResult.uid().c_str());
-  }
-}
-
-void processData(AsyncResult &aResult){
-  if (!aResult.isResult())
-    return;
-  if (aResult.isEvent())
-    Firebase.printf("📅 Event: %s, msg: %s, code: %d\n", aResult.uid().c_str(), aResult.eventLog().message().c_str(), aResult.eventLog().code());
-  if (aResult.isDebug())
-    Firebase.printf("🐛 Debug: %s, msg: %s\n", aResult.uid().c_str(), aResult.debug().c_str());
-  if (aResult.isError())
-    Firebase.printf("❌ Error: %s, msg: %s, code: %d\n", aResult.uid().c_str(), aResult.error().message().c_str(), aResult.error().code());
-  if (aResult.available())
-    Firebase.printf("✅ Success: %s, payload: %s\n", aResult.uid().c_str(), aResult.c_str());
 }
