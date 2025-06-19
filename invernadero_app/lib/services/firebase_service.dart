@@ -5,10 +5,13 @@ import 'package:invernadero_app/models/sensor_data.dart';
 
 class FirebaseService {
   final DatabaseReference _database = FirebaseDatabase.instance.ref();
-
-  // Función para leer los datos del sensor de la ruta simple (CORREGIDA)
-  Stream<SensorData?> getLatestSensorData(String uid) {
-    return _database.child('UsersData/$uid/readings').onValue.map((event) {
+  
+  // FUNCIÓN PARA LEER EL ESTADO ACTUAL
+  // Se suscribe a la ruta donde el ESP32 reporta su estado y la convierte
+  // en un objeto SensorData para que la app la pueda usar.
+  Stream<SensorData?> getCurrentDataStream(String uid) {
+    // La ruta ahora es la que definimos en el ESP32 optimizado
+    return _database.child('UsersData/$uid/current').onValue.map((event) {
       if (event.snapshot.value != null) {
         final Map<dynamic, dynamic> data = event.snapshot.value as Map<dynamic, dynamic>;
         return SensorData.fromMap(data);
@@ -17,23 +20,21 @@ class FirebaseService {
     });
   }
   
-  // Función para enviar el comando de la bomba
-  Future<void> setPumpMode(String uid, String mode) async {
-    await _database.child('invernadero/actuadores/riego_manual').set(mode);
-    print('Comando enviado a Firebase: $mode');
-  }
+  // FUNCIÓN PARA EL BOTÓN ÚNICO
+  // Envía el comando para iniciar un ciclo de riego manual de 3 segundos.
+  // Es la única acción que la app necesita enviar.
+  Future<void> triggerWatering() async {
+    final controlPath = _database.child('invernadero/control');
+    try {
+      await controlPath.set({
+        // El comando es fijo, ya que el botón solo hace una cosa
+        'command': 'water-now', 
+        'timestamp': ServerValue.timestamp, 
+      });
+      print('✅ Comando "Regar Ahora" enviado con éxito.');
 
-  // Función para escuchar el modo actual de la bomba y actualizar los colores
-  Stream<String> getPumpModeStream() {
-    return _database
-        .child('invernadero/actuadores/riego_manual')
-        .onValue
-        .map((event) {
-          final value = event.snapshot.value;
-          if (value is String) {
-            return value.trim(); // Limpia espacios en blanco
-          }
-          return "auto"; // Valor por defecto
-        });
+    } catch (error) {
+      print('❌❌❌ ERROR AL ENVIAR EL COMANDO: $error ❌❌❌');
+    }
   }
 }

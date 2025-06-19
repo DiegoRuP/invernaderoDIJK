@@ -4,8 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:invernadero_app/models/sensor_data.dart';
 import 'package:invernadero_app/services/firebase_service.dart';
 import 'package:invernadero_app/widgets/sensor_card.dart';
-// Ya no necesitamos 'intl' para el timestamp
-// import 'package:intl/intl.dart'; 
+import 'package:intl/intl.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -17,32 +16,18 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final FirebaseService _firebaseService = FirebaseService();
   String? _currentUserUid;
-  String _pumpMode = "auto";
 
   @override
   void initState() {
     super.initState();
     _getUid();
-    _listenToPumpMode();
   }
 
   void _getUid() {
+    // En una app real, aquí obtendrías el UID del usuario autenticado.
+    // Usamos uno fijo para la prueba.
     setState(() {
-      _currentUserUid = "YM7mg66eafgxz7i4vBJID8xy3Sq2"; // UID de prueba
-    });
-  }
-
-  void _listenToPumpMode() {
-    _firebaseService.getPumpModeStream().listen((mode) {
-      // --- LÍNEA DE DEPURACIÓN ---
-      // Revisa la consola para asegurarte de que el valor llega correctamente
-      print(">>> Modo actual desde Firebase: '---$mode---'");
-      
-      if (mounted) {
-        setState(() {
-          _pumpMode = mode;
-        });
-      }
+      _currentUserUid = "YM7mg66eafgxz7i4vBJID8xy3Sq2";
     });
   }
 
@@ -63,7 +48,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: Container(
           constraints: const BoxConstraints(maxWidth: 1200),
           child: StreamBuilder<SensorData?>(
-            stream: _firebaseService.getLatestSensorData(_currentUserUid!),
+            stream: _firebaseService.getCurrentDataStream(_currentUserUid!),
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -72,11 +57,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 return Center(child: Text('Error: ${snapshot.error}'));
               }
               if (!snapshot.hasData || snapshot.data == null) {
-                return const Center(child: Text('Esperando datos del sensor...'));
+                return const Center(child: Text('Esperando datos del invernadero...'));
               }
 
               final SensorData data = snapshot.data!;
               
+              final bool isWatering = data.pumpStatus;
+
               return SingleChildScrollView(
                 padding: const EdgeInsets.all(24.0),
                 child: Column(
@@ -84,8 +71,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   children: [
                     const Text('Datos Actuales:', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 10),
-
-                    // Tu tarjeta de alerta de luz (sin cambios)
+                    
                     if (data.lightLevel < 10)
                       Card(
                         color: Colors.amber[100],
@@ -106,28 +92,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   style: TextStyle(
                                       color: Colors.black87,
                                       fontWeight: FontWeight.w500,
-                                      fontSize: 12),
+                                      fontSize: 14),
                                 ),
                               ),
                             ],
                           ),
                         ),
                       ),
-                    
+
                     const SizedBox(height: 10),
                     
-                    // Tu LayoutBuilder para las tarjetas de sensores (sin cambios)
+                    // --- DISEÑO RESPONSIVO PARA LAS TARJETAS DE SENSORES ---
                     LayoutBuilder(
                       builder: (context, constraints) {
-                        const double mobileBreakpoint = 600;
-                        if (constraints.maxWidth < mobileBreakpoint) {
+                        // Punto de quiebre: si la pantalla es más ancha que 600px, usamos el diseño horizontal.
+                        const double desktopBreakpoint = 600;
+
+                        if (constraints.maxWidth < desktopBreakpoint) {
+                          // VISTA PARA MÓVILES (Grid 2x2)
                           return GridView.count(
                             shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(), 
+                            physics: const NeverScrollableScrollPhysics(),
                             crossAxisCount: 2,
                             crossAxisSpacing: 10,
                             mainAxisSpacing: 10,
-                            childAspectRatio: .92, 
+                            childAspectRatio: .95,
                             children: [
                               SensorCard(title: 'Temperatura', value: '${data.temperature.toStringAsFixed(1)} °C', icon: Icons.thermostat_outlined, color: Colors.redAccent),
                               SensorCard(title: 'Humedad Ambiental', value: '${data.humidity.toStringAsFixed(1)} %', icon: Icons.water_drop_outlined, color: Colors.blueAccent),
@@ -136,6 +125,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ],
                           );
                         } else {
+                          // VISTA PARA WEB/ESCRITORIO (Fila Horizontal 1x4)
                           return Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -153,71 +143,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 20),
                     
-                    // Tu Card de Control Manual (ahora funcional)
+                    // Panel de control (sin cambios)
                     Card(
                       elevation: 4,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      margin: const EdgeInsets.symmetric(horizontal: 0), // Ajustado para mejor alineación
                       child: Padding(
                         padding: const EdgeInsets.all(16.0),
                         child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            const Text('Control Manual:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            Text('Control de Riego', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
                             const SizedBox(height: 15),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                              children: [
-                                // Botón AUTO
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: () => _firebaseService.setPumpMode(_currentUserUid!, "auto"),
-                                    icon: const Icon(Icons.auto_mode, size: 20),
-                                    label: const Text('Auto'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _pumpMode == "auto" ? Colors.blue[600] : Colors.grey[400],
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(vertical: 12),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                    ),
-                                  ),
+                            ElevatedButton.icon(
+                              onPressed: isWatering ? null : () {
+                                _firebaseService.triggerWatering();
+                              },
+                              icon: isWatering
+                                  ? const SizedBox(
+                                      width: 24,
+                                      height: 20,
+                                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+                                    )
+                                  : const Icon(Icons.water_drop, size: 20),
+                              label: Text(isWatering ? "REGANDO..." : "REGAR AHORA (3 seg)"),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: isWatering ? Colors.grey.shade600 : Colors.blue.shade700,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 20),
+                                textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                                const SizedBox(width: 8),
-                                // Botón ON
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: () => _firebaseService.setPumpMode(_currentUserUid!, "on"),
-                                    icon: const Icon(Icons.water_drop, size: 20),
-                                    label: const Text('ON'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _pumpMode == "on" ? Colors.green[600] : Colors.grey[400],
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(vertical: 12),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                // Botón OFF
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: () => _firebaseService.setPumpMode(_currentUserUid!, "off"),
-                                    icon: const Icon(Icons.stop_circle_outlined, size: 20), // Icono cambiado
-                                    label: const Text('OFF'),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _pumpMode == "off" ? Colors.red[600] : Colors.grey[400],
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(vertical: 12),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                           ],
                         ),
                       ),
                     ),
-                    // Se eliminó el texto de 'Última actualización'
+                    const SizedBox(height: 20),
+                    Align(
+                      alignment: Alignment.center,
+                      child: Text(
+                        'Última actualización: ${DateFormat('dd/MM/yyyy HH:mm:ss').format(DateTime.fromMillisecondsSinceEpoch(data.timestamp * 1000))}',
+                        style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ),
                   ],
                 ),
               );

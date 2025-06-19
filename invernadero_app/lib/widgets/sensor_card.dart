@@ -39,7 +39,7 @@ class SensorCard extends StatelessWidget {
             Text(
               value,
               style: TextStyle(
-                fontSize: 20,
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
                 color: color,
               ),
